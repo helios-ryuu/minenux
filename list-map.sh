@@ -115,15 +115,32 @@ action_create() {
 }
 
 action_edit_gamerules() {
-    local current meta json
+    local current meta json current_gm new_gm
     current=$(prop_get level-name)
     if ! is_server_running; then
-        echo "Server must be running to edit live gamerules. Switch to / start a map first."
+        echo "Server must be running to edit live settings. Switch to / start a map first."
         return
     fi
 
-    echo "Editing gamerules for active map '$current' (Enter to keep current value)."
     meta="$INSTALL_DIR/$current/.minenux-meta.json"
+    
+    echo "Editing settings for active map '$current' (Enter to keep current value)."
+    
+    # 1. Xử lý Gamemode
+    current_gm=$(jq -r '.gamemode // "survival"' "$meta" 2>/dev/null)
+    read -p "  gamemode [$current_gm]: " new_gm
+    new_gm=${new_gm:-$current_gm}
+    if [[ "$new_gm" =~ ^(survival|creative|adventure|spectator)$ ]]; then
+        # Cập nhật Runtime cho người chơi mới
+        rcon_exec "defaultgamemode $new_gm" &> /dev/null
+        # Cập nhật Properties cho lần khởi động sau
+        prop_set gamemode "$new_gm"
+    else
+        echo "  -> Invalid gamemode. Keeping '$current_gm'."
+        new_gm="$current_gm"
+    fi
+
+    # 2. Xử lý Gamerules
     json="{}"
     for i in "${!GAMERULE_KEYS[@]}"; do
         local key="${GAMERULE_KEYS[$i]}"
@@ -136,13 +153,14 @@ action_edit_gamerules() {
         json=$(jq -c --arg k "$key" --arg v "$val" '. + {($k): $v}' <<< "$json")
     done
 
+    # 3. Đồng bộ hóa Metadata
     if [ -f "$meta" ]; then
         local tmp
-        tmp=$(jq --argjson rules "$json" '.gamerules = $rules' "$meta")
+        tmp=$(jq --argjson rules "$json" --arg gm "$new_gm" '.gamerules = $rules | .gamemode = $gm' "$meta")
         echo "$tmp" > "$meta"
         chown "$MC_USER":"$MC_USER" "$meta" 2>/dev/null
     fi
-    echo "✅ Gamerules updated live, and saved."
+    echo "✅ Settings (Gamemode & Gamerules) updated live, and saved."
 }
 
 action_rename() {

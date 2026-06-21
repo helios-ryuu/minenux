@@ -79,6 +79,7 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     LEVEL_NAME=$(jq -r '.initial_map.name // "world"' "$CONFIG_FILE")
     SEED_MODE=$(jq -r '.initial_map.seed_mode // "random"' "$CONFIG_FILE")
     LEVEL_SEED=$(jq -r '.initial_map.seed // empty' "$CONFIG_FILE")
+    GMODE=$(jq -r '.initial_map.gamemode // "survival"' "$CONFIG_FILE")
     GAMERULES_JSON=$(jq -c '.initial_map.gamerules // {}' "$CONFIG_FILE")
 
     # Require variables are set
@@ -129,6 +130,13 @@ else
     read -p "Initial map name [world]: " LEVEL_NAME
     LEVEL_NAME=${LEVEL_NAME:-world}
 
+    read -p "Select Gamemode (survival/creative/adventure/spectator) [survival]: " GMODE
+    GMODE=${GMODE:-survival}
+    if [[ ! "$GMODE" =~ ^(survival|creative|adventure|spectator)$ ]]; then
+        echo "Invalid gamemode. Defaulting to survival."
+        GMODE="survival"
+    fi
+
     LEVEL_SEED=$(prompt_seed)
     GAMERULES_JSON=$(prompt_gamerules)
 fi
@@ -165,6 +173,7 @@ if [ "$AUTO_CONFIRM" = false ]; then
     echo "- Max Players:     $MAX_PLAYERS"
     echo "- RCON Port:       $RCON_PORT"
     echo "- Initial Map:     $LEVEL_NAME"
+    echo "- Gamemode:        $GMODE"
     echo "- Seed:            ${LEVEL_SEED:-<random>}"
     echo "- Game Rules:      $GAMERULES_JSON"
     echo "========================================="
@@ -213,6 +222,7 @@ prop_set online-mode "$ONLINE_MODE"
 prop_set max-players "$MAX_PLAYERS"
 prop_set level-name "$LEVEL_NAME"
 prop_set level-seed "$LEVEL_SEED"
+prop_set gamemode "$GMODE"
 prop_set enable-rcon "true"
 prop_set "rcon.port" "$RCON_PORT"
 prop_set "rcon.password" "$RCON_PASSWORD"
@@ -221,8 +231,8 @@ prop_set broadcast-rcon-to-ops "false"
 # a non-localhost host to rcon.py) - so it never needs to be opened in UFW.
 
 mkdir -p "$INSTALL_DIR/$LEVEL_NAME"
-jq -n --arg seed "$LEVEL_SEED" --argjson rules "$GAMERULES_JSON" --arg created "$(date -Iseconds)" \
-    '{seed: $seed, created_at: $created, gamerules: $rules, gamerules_applied: false}' \
+jq -n --arg seed "$LEVEL_SEED" --arg gm "$GMODE" --argjson rules "$GAMERULES_JSON" --arg created "$(date -Iseconds)" \
+    '{seed: $seed, gamemode: $gm, created_at: $created, gamerules: $rules, gamerules_applied: false}' \
     > "$INSTALL_DIR/$LEVEL_NAME/.minenux-meta.json"
 chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR/$LEVEL_NAME"
 
