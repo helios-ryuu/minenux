@@ -161,11 +161,28 @@ action_export() {
     local target="${MAPS[$((idx - 1))]}"
     if [ -z "$target" ]; then echo "Invalid selection."; return; fi
 
-    read -p "Enter destination directory [~/minenux_exports]: " dest_dir
-    dest_dir="${dest_dir:-$HOME/minenux_exports}"
-    eval dest_dir="$dest_dir"
+    # 1. Định tuyến thư mục Home thực tế của user gọi lệnh
+    local real_home
+    if [ -n "$SUDO_USER" ]; then
+        real_home=$(eval echo ~"$SUDO_USER")
+    else
+        real_home="$HOME"
+    fi
+
+    local default_dest="$real_home/minenux_exports"
+    read -p "Enter destination directory [$default_dest]: " dest_dir
+    dest_dir="${dest_dir:-$default_dest}"
+
+    # 2. Xử lý an toàn nếu user nhập tay ký tự '~' (ví dụ: ~/my_backups)
+    dest_dir="${dest_dir/#\~/$real_home}"
 
     mkdir -p "$dest_dir"
+    
+    # 3. Phân quyền lại cho thư mục chứa nếu nó vừa được root tạo ra
+    if [ -n "$SUDO_USER" ]; then
+        chown -R "$SUDO_USER":"$SUDO_USER" "$dest_dir"
+    fi
+
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local archive="$dest_dir/${target}_${timestamp}.tar.gz"
 
@@ -178,8 +195,13 @@ action_export() {
     echo "Compressing '$target' to $archive..."
     tar -czf "$archive" -C "$INSTALL_DIR" "$target"
     
+    # 4. Phân quyền lại cho tệp nén tar.gz để user bình thường có thể sử dụng
+    if [ -n "$SUDO_USER" ]; then
+        chown "$SUDO_USER":"$SUDO_USER" "$archive"
+    fi
+    
     local sz=$(du -sh "$archive" | cut -f1)
-    echo "✅ Export complete! Archive size: $sz"
+    echo "✅ Export complete! Archive saved at: $archive (Size: $sz)"
 }
 
 action_import() {
