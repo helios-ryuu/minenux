@@ -1,0 +1,33 @@
+{
+  "system": {
+    "java_version": "25",
+    "mc_user": "minenux",
+    "install_dir": "/opt/minecraft/server"
+  },
+  "minecraft": {
+    "mc_version": "latest",
+    "fabric_version": "latest",
+    "installer_version": "latest",
+    "memory_alloc": "3G"
+  },
+  "server": {
+    "online-mode": "false",
+    "max-players": "20"
+  },
+  "rcon": {
+    "port": 25575
+  },
+  "initial_map": {
+    "name": "world",
+    "seed_mode": "random",
+    "seed": "",
+    "gamerules": {
+      "keepInventory": "false",
+      "doDaylightCycle": "true",
+      "doMobSpawning": "true",
+      "mobGriefing": "true",
+      "doFireTick": "true",
+      "announceAdvancements": "true"
+    }
+  }
+}

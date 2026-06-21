@@ -21,6 +21,8 @@ if ! command -v curl &> /dev/null; then
     exit 1
 fi
 
+# NOTE: keep this in sync with the mc_version you actually installed
+# (see config.json -> minecraft.mc_version, or check INSTALL_DIR/server.properties).
 TARGET_GAME_VERSION="26.2"
 
 echo "Minenux Automod: Starting Modrinth API Fetcher for Game Version $TARGET_GAME_VERSION"
@@ -28,19 +30,19 @@ echo "--------------------------------------------------------"
 
 for PROJECT_ID in "$@"; do
     echo "[*] Querying API for project ID: $PROJECT_ID..."
-    
+
     # Query Modrinth for this project's versions, filter by matching target game version and loader=fabric
     # We grab the first (most recent) version uploaded that matches the criteria
     VERSIONS_JSON=$(curl -s "https://api.modrinth.com/v2/project/$PROJECT_ID/version")
-    
+
     FILE_URL=$(echo "$VERSIONS_JSON" | jq -r --arg ver "$TARGET_GAME_VERSION" '
-        [ .[] | select(.game_versions[] == $ver) | select(.loaders[] == "fabric") ] 
-        | .[0].files[] | select(.primary == true) | .url 
+        [ .[] | select(.game_versions[] == $ver) | select(.loaders[] == "fabric") ]
+        | .[0].files[] | select(.primary == true) | .url
     ')
-    
+
     FILE_NAME=$(echo "$VERSIONS_JSON" | jq -r --arg ver "$TARGET_GAME_VERSION" '
-        [ .[] | select(.game_versions[] == $ver) | select(.loaders[] == "fabric") ] 
-        | .[0].files[] | select(.primary == true) | .filename 
+        [ .[] | select(.game_versions[] == $ver) | select(.loaders[] == "fabric") ]
+        | .[0].files[] | select(.primary == true) | .filename
     ')
 
     if [ -n "$FILE_URL" ] && [ "$FILE_URL" != "null" ]; then
@@ -55,6 +57,6 @@ for PROJECT_ID in "$@"; do
 done
 
 echo "Setting read permissions..."
-chmod 644 *.jar
+chmod 644 *.jar 2>/dev/null
 
-echo "Task completed. Do not forget to restart systemd service: sudo systemctl restart minecraft"
+echo "Task completed. Don't forget to restart the systemd service: sudo systemctl restart minecraft"
