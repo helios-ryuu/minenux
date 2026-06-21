@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# list-map.sh - interactive map manager.
+# map.sh - interactive map manager.
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -123,7 +123,7 @@ action_create() {
 }
 
 action_edit_gamerules() {
-    local current meta json current_gm new_gm current_ch new_ch
+    local current meta json current_gm new_gm current_ch new_ch settings_changed=false
     current=$(prop_get level-name)
     if ! is_server_running; then
         echo "Server must be running to edit live settings. Switch to / start a map first."
@@ -137,8 +137,12 @@ action_edit_gamerules() {
     read -p "  gamemode [$current_gm]: " new_gm
     new_gm=${new_gm:-$current_gm}
     if [[ "$new_gm" =~ ^(survival|creative|adventure|spectator)$ ]]; then
-        rcon_exec "defaultgamemode $new_gm" &> /dev/null
-        prop_set gamemode "$new_gm"
+        if [ "$new_gm" != "$current_gm" ]; then
+            rcon_exec "defaultgamemode $new_gm" &> /dev/null
+            rcon_exec "gamemode $new_gm @a" &> /dev/null
+            prop_set gamemode "$new_gm"
+            settings_changed=true
+        fi
     else
         echo "  -> Invalid gamemode. Keeping '$current_gm'."
         new_gm="$current_gm"
@@ -148,8 +152,29 @@ action_edit_gamerules() {
     read -p "  allow cheats (flight/cmd-blocks) [$current_ch]: " new_ch
     new_ch=${new_ch:-$current_ch}
     if [[ "$new_ch" =~ ^(true|false)$ ]]; then
-        prop_set allow-flight "$new_ch"
-        prop_set enable-command-block "$new_ch"
+        if [ "$new_ch" != "$current_ch" ]; then
+            prop_set allow-flight "$new_ch"
+            prop_set enable-command-block "$new_ch"
+            settings_changed=true
+            
+            # OP/De-OP currently connected players immediately
+            local player_list
+            player_list=$(rcon_exec "list" | sed -n 's/.*players online: //p' | tr -d '\r')
+            if [ -n "$player_list" ]; then
+                IFS=',' read -ra ADDR <<< "$player_list"
+                for player in "${ADDR[@]}"; do
+                    player=$(echo "$player" | xargs)
+                    [ -z "$player" ] && continue
+                    if [ "$new_ch" == "true" ]; then
+                        rcon_exec "op $player" &> /dev/null
+                        echo "  -> Promoted $player to Operator."
+                    else
+                        rcon_exec "deop $player" &> /dev/null
+                        echo "  -> Demoted $player from Operator."
+                    fi
+                done
+            fi
+        fi
     else
         echo "  -> Invalid cheat flag. Keeping '$current_ch'."
         new_ch="$current_ch"
@@ -175,6 +200,19 @@ action_edit_gamerules() {
         chown "$MC_USER":"$MC_USER" "$meta" 2>/dev/null
     fi
     echo "✅ Live settings updated and persisted."
+
+    if [ "$settings_changed" = true ]; then
+        echo ""
+        echo "⚠️  Some modified settings (allow-flight, command blocks) require a server restart to take effect."
+        read -p "Do you want to gracefully restart the Minecraft server now? [y/N]: " restart_choice
+        if [[ "$restart_choice" =~ ^[Yy]$ ]]; then
+            echo "Restarting server..."
+            graceful_stop
+            systemctl start minecraft
+            apply_pending_gamerules "$current"
+            echo "✅ Server restarted successfully with new settings."
+        fi
+    fi
 }
 
 action_rename() {
@@ -221,7 +259,7 @@ action_export() {
     if [ -n "$SUDO_USER" ]; then chown -R "$SUDO_USER":"$SUDO_USER" "$dest_dir"; fi
 
     local timestamp=$(date +%Y%m%d_%H%M%S)
-    local archive="$dest_dir/${target}_${timestamp}.tar.gz"
+    local archive="$dest_dir/${target}_${timestamp}.zip"
 
     echo "Flushing world data to disk..."
     if is_server_running && [ "$target" == "$(prop_get level-name)" ]; then
@@ -229,77 +267,21 @@ action_export() {
         sleep 2
     fi
 
-    echo "Preparing export payload in isolated staging area..."
-    local staging_dir=$(mktemp -d)
-    cp -r "$INSTALL_DIR/$target" "$staging_dir/"
+    local meta="$INSTALL_DIR/$target/.minenux-meta.json"
+    local gmode=$(jq -r '.gamemode // "survival"' "$meta" 2>/dev/null)
+    local cheats=$(jq -r '.cheats // "false"' "$meta" 2>/dev/null)
 
-    # --- BẮT ĐẦU NBT TRANSFORMER HOOK ---
-    local player_dir="$staging_dir/$target/playerdata"
-    if [ -d "$player_dir" ]; then
-        # Truy xuất UUID file mới nhất (đại diện cho host player)
-        local latest_player=$(ls -t "$player_dir/"*.dat 2>/dev/null | head -n 1)
-        local level_dat="$staging_dir/$target/level.dat"
-        
-        if [ -n "$latest_player" ] && [ -f "$level_dat" ]; then
-            echo "Injecting Player UUID data into level.dat for Singleplayer compatibility..."
-            
-            # Ưu tiên sử dụng venv nếu đã được cài đặt, fallback về python3 hệ thống
-            local py_bin="python3"
-            [ -x "$INSTALL_DIR/venv/bin/python3" ] && py_bin="$INSTALL_DIR/venv/bin/python3"
-
-            $py_bin -c "
-import sys
-try:
-    from nbt import nbt
-except ImportError:
-    print('  -> Warning: nbt library missing. Skipping Data.Player injection.')
-    sys.exit(0)
-
-try:
-    player_nbt = nbt.NBTFile('$latest_player', 'rb')
-    level_nbt = nbt.NBTFile('$level_dat', 'rb')
-    
-    if 'Data' not in level_nbt:
-        sys.exit(1)
-        
-    data_tag = level_nbt['Data']
-    if 'Player' not in data_tag:
-        data_tag.tags.append(nbt.TAG_Compound(name='Player'))
-        
-    player_tag = data_tag['Player']
-    
-    # Các thông số sinh tồn cốt lõi cần đồng bộ
-    sync_tags = ['Inventory', 'Pos', 'Rotation', 'XpLevel', 'XpP', 'XpSeed', 'XpTotal', 'Health', 'foodLevel', 'foodTickTimer', 'foodExhaustionLevel', 'foodSaturationLevel', 'abilities']
-    
-    for t in sync_tags:
-        if t in player_nbt:
-            if t in player_tag:
-                del player_tag[t]
-            player_tag.tags.append(player_nbt[t])
-            
-    level_nbt.write_file('$level_dat')
-    print('  -> NBT Injection successful. Character data synchronized.')
-except Exception as e:
-    print(f'  -> NBT Injection failed: {e}')
-"
-        fi
-    fi
-    # --- KẾT THÚC NBT TRANSFORMER HOOK ---
-
-    echo "Compressing '$target' to $archive..."
-    tar -czf "$archive" -C "$staging_dir" "$target"
+    echo "Compressing and synchronizing character data for export..."
+    python3 "$DIR/lib/nbt_helper.py" export "$INSTALL_DIR/$target" "$archive" "$gmode" "$cheats"
     
     if [ -n "$SUDO_USER" ]; then chown "$SUDO_USER":"$SUDO_USER" "$archive"; fi
-    
-    # Dọn dẹp phân vùng tạm
-    rm -rf "$staging_dir"
     
     local sz=$(du -sh "$archive" | cut -f1)
     echo "✅ Export complete! Archive saved at: $archive (Size: $sz)"
 }
 
 action_import() {
-    read -p $'\nEnter absolute path to the map archive (.tar.gz): ' archive_path
+    read -p $'\nEnter absolute path to the map archive (.zip / .tar.gz): ' archive_path
     eval archive_path="$archive_path"
     archive_path="${archive_path%\"}"
     archive_path="${archive_path#\"}"
@@ -310,19 +292,16 @@ action_import() {
     if [[ ! "$newname" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "❌ Invalid name format."; return; fi
     if [ -d "$INSTALL_DIR/$newname" ]; then echo "❌ Map '$newname' already exists."; return; fi
 
+    read -p "Enter Minecraft username to sync Singleplayer playerdata (optional, enter to skip): " mc_username
+
     echo "Extracting map data..."
-    local tmpdir=$(mktemp -d)
-    tar -xzf "$archive_path" -C "$tmpdir"
+    local online_mode=$(prop_get online-mode)
+    python3 "$DIR/lib/nbt_helper.py" import "$archive_path" "$INSTALL_DIR/$newname" "$mc_username" "$online_mode"
     
-    local extracted_world=$(find "$tmpdir" -name "level.dat" -printf '%h\n' -quit)
-    if [ -z "$extracted_world" ]; then
-        echo "❌ Invalid archive: No level.dat found inside the tarball."
-        rm -rf "$tmpdir"
+    if [ $? -ne 0 ]; then
+        echo "❌ Import failed."
         return
     fi
-
-    mv "$extracted_world" "$INSTALL_DIR/$newname"
-    rm -rf "$tmpdir"
 
     local meta="$INSTALL_DIR/$newname/.minenux-meta.json"
     if [ ! -f "$meta" ]; then

@@ -7,7 +7,7 @@ MC_USER="${MC_USER:-minenux}"
 SERVICE_NAME="minecraft"
 
 # Curated gamerule set + vanilla defaults, shared between setup.sh (initial map)
-# and list-map.sh (new map / live edit).
+# and map.sh (new map / live edit).
 GAMERULE_KEYS=(keepInventory doDaylightCycle doMobSpawning mobGriefing doFireTick announceAdvancements)
 GAMERULE_DEFAULTS=(false true true true true true)
 

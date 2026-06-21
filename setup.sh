@@ -108,8 +108,8 @@ else
     read -p "Enter Fabric Installer Version [latest]: " INSTALLER_VER
     INSTALLER_VER=${INSTALLER_VER:-latest}
 
-    read -p "Enter RAM Allocation (e.g., 8G) [8G]: " RAM
-    RAM=${RAM:-8G}
+    read -p "Enter RAM Allocation (e.g., 4G) [4G]: " RAM
+    RAM=${RAM:-4G}
 
     echo ""
     echo "--- Online Mode (Authentication) ---"
@@ -123,7 +123,7 @@ else
     read -p "Max Players? [20]: " MAX_PLAYERS
     MAX_PLAYERS=${MAX_PLAYERS:-20}
 
-    read -p "RCON port (used internally by server-up.sh/server-down.sh/list-map.sh) [25575]: " RCON_PORT
+    read -p "RCON port (used internally by up.sh/down.sh/map.sh) [25575]: " RCON_PORT
     RCON_PORT=${RCON_PORT:-25575}
 
     echo ""
@@ -227,6 +227,7 @@ prop_set max-players "$MAX_PLAYERS"
 prop_set level-name "$LEVEL_NAME"
 prop_set level-seed "$LEVEL_SEED"
 prop_set gamemode "$GMODE"
+prop_set force-gamemode "true"
 prop_set allow-flight "$ALLOW_CHEATS"
 prop_set enable-rcon "true"
 prop_set "rcon.port" "$RCON_PORT"
@@ -242,8 +243,8 @@ jq -n --arg seed "$LEVEL_SEED" --arg gm "$GMODE" --argjson rules "$GAMERULES_JSO
 chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR/$LEVEL_NAME"
 
 echo "=== Phase 5: Optimization & Daemonization ==="
-# Note: named run-server.sh (not server-up.sh) deliberately - keeps it distinct
-# from the top-level management wrapper ./server-up.sh that calls systemctl + ip.sh.
+# Note: named run-server.sh (not up.sh) deliberately - keeps it distinct
+# from the top-level management wrapper ./up.sh that calls systemctl + ip.sh.
 RUN_SH="$INSTALL_DIR/run-server.sh"
 cat << 'EOF' > "$RUN_SH"
 #!/usr/bin/env bash
@@ -295,6 +296,6 @@ echo "========================================="
 echo "Setup Complete!"
 echo "- Map '$LEVEL_NAME' will be generated on first boot (seed: ${LEVEL_SEED:-random})."
 echo "- Gamerules are saved and will auto-apply via RCON once the world finishes generating."
-echo "- RCON listens on 127.0.0.1:$RCON_PORT only - used internally by server-up.sh / server-down.sh / list-map.sh."
-echo "Run: sudo ./server-up.sh   to launch the server."
+echo "- RCON listens on 127.0.0.1:$RCON_PORT only - used internally by up.sh / down.sh / map.sh."
+echo "Run: sudo ./up.sh   to launch the server."
 echo "========================================="
