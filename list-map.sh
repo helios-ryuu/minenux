@@ -62,16 +62,19 @@ action_switch() {
     local current=$(prop_get level-name)
     if [ "$target" == "$current" ]; then echo "'$target' is already the selected map."; return; fi
 
-    # Truy xuất gamemode từ metadata (mặc định survival nếu file cũ không có)
-    local gmode=$(jq -r '.gamemode // "survival"' "$INSTALL_DIR/$target/.minenux-meta.json" 2>/dev/null)
+    local meta="$INSTALL_DIR/$target/.minenux-meta.json"
+    local gmode=$(jq -r '.gamemode // "survival"' "$meta" 2>/dev/null)
+    local cheats=$(jq -r '.cheats // "false"' "$meta" 2>/dev/null)
 
     echo "Switching active map: $current -> $target"
     graceful_stop
     
     prop_set level-name "$target"
     prop_set gamemode "$gmode"
+    prop_set allow-flight "$cheats"
+    prop_set enable-command-block "$cheats"
     
-    echo "Starting server with map '$target' (Gamemode: $gmode)..."
+    echo "Starting server with map '$target' (Mode: $gmode, Cheats: $cheats)..."
     systemctl start minecraft
     apply_pending_gamerules "$target"
     echo "✅ Server is now running map '$target'."
@@ -82,40 +85,45 @@ action_create() {
     if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "Invalid name."; return; fi
     if [ -d "$INSTALL_DIR/$name" ]; then echo "A map named '$name' already exists."; return; fi
 
-    local seed rules gmode
-    seed=$(prompt_seed)
-    rules=$(prompt_gamerules)
+    local seed rules gmode cheats
     
-    # Yêu cầu nhập Game Mode
     read -p "Select gamemode (survival/creative/adventure/spectator) [survival]: " gmode
     gmode=${gmode:-survival}
     if [[ ! "$gmode" =~ ^(survival|creative|adventure|spectator)$ ]]; then
-        echo "Invalid gamemode format. Defaulting to survival."
+        echo "Invalid gamemode. Defaulting to survival."
         gmode="survival"
     fi
+
+    read -p "Allow cheats? (enables flight & command blocks) (true/false) [false]: " cheats
+    cheats=${cheats:-false}
+    if [[ ! "$cheats" =~ ^(true|false)$ ]]; then cheats="false"; fi
+
+    seed=$(prompt_seed)
+    rules=$(prompt_gamerules)
 
     graceful_stop
     mkdir -p "$INSTALL_DIR/$name"
     chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR/$name"
 
-    # Ghi gmode vào metadata
-    jq -n --arg seed "$seed" --arg gm "$gmode" --argjson rules "$rules" --arg created "$(date -Iseconds)" \
-        '{seed: $seed, gamemode: $gm, created_at: $created, gamerules: $rules, gamerules_applied: false}' \
+    jq -n --arg seed "$seed" --arg gm "$gmode" --arg ch "$cheats" --argjson rules "$rules" --arg created "$(date -Iseconds)" \
+        '{seed: $seed, gamemode: $gm, cheats: $ch, created_at: $created, gamerules: $rules, gamerules_applied: false}' \
         > "$INSTALL_DIR/$name/.minenux-meta.json"
     chown "$MC_USER":"$MC_USER" "$INSTALL_DIR/$name/.minenux-meta.json"
 
     prop_set level-name "$name"
     prop_set level-seed "$seed"
     prop_set gamemode "$gmode"
+    prop_set allow-flight "$cheats"
+    prop_set enable-command-block "$cheats"
 
-    echo "Starting server to generate the new world (first boot can take 1-3 min)..."
+    echo "Starting server to generate world '$name'..."
     systemctl start minecraft
     apply_pending_gamerules "$name"
-    echo "✅ Map '$name' created and active (Mode: $gmode, Seed: ${seed:-random})."
+    echo "✅ Map '$name' created (Mode: $gmode, Cheats: $cheats)."
 }
 
 action_edit_gamerules() {
-    local current meta json current_gm new_gm
+    local current meta json current_gm new_gm current_ch new_ch
     current=$(prop_get level-name)
     if ! is_server_running; then
         echo "Server must be running to edit live settings. Switch to / start a map first."
@@ -123,24 +131,30 @@ action_edit_gamerules() {
     fi
 
     meta="$INSTALL_DIR/$current/.minenux-meta.json"
-    
     echo "Editing settings for active map '$current' (Enter to keep current value)."
     
-    # 1. Xử lý Gamemode
     current_gm=$(jq -r '.gamemode // "survival"' "$meta" 2>/dev/null)
     read -p "  gamemode [$current_gm]: " new_gm
     new_gm=${new_gm:-$current_gm}
     if [[ "$new_gm" =~ ^(survival|creative|adventure|spectator)$ ]]; then
-        # Cập nhật Runtime cho người chơi mới
         rcon_exec "defaultgamemode $new_gm" &> /dev/null
-        # Cập nhật Properties cho lần khởi động sau
         prop_set gamemode "$new_gm"
     else
         echo "  -> Invalid gamemode. Keeping '$current_gm'."
         new_gm="$current_gm"
     fi
 
-    # 2. Xử lý Gamerules
+    current_ch=$(jq -r '.cheats // "false"' "$meta" 2>/dev/null)
+    read -p "  allow cheats (flight/cmd-blocks) [$current_ch]: " new_ch
+    new_ch=${new_ch:-$current_ch}
+    if [[ "$new_ch" =~ ^(true|false)$ ]]; then
+        prop_set allow-flight "$new_ch"
+        prop_set enable-command-block "$new_ch"
+    else
+        echo "  -> Invalid cheat flag. Keeping '$current_ch'."
+        new_ch="$current_ch"
+    fi
+
     json="{}"
     for i in "${!GAMERULE_KEYS[@]}"; do
         local key="${GAMERULE_KEYS[$i]}"
@@ -153,14 +167,14 @@ action_edit_gamerules() {
         json=$(jq -c --arg k "$key" --arg v "$val" '. + {($k): $v}' <<< "$json")
     done
 
-    # 3. Đồng bộ hóa Metadata
     if [ -f "$meta" ]; then
         local tmp
-        tmp=$(jq --argjson rules "$json" --arg gm "$new_gm" '.gamerules = $rules | .gamemode = $gm' "$meta")
+        tmp=$(jq --argjson rules "$json" --arg gm "$new_gm" --arg ch "$new_ch" \
+            '.gamerules = $rules | .gamemode = $gm | .cheats = $ch' "$meta")
         echo "$tmp" > "$meta"
         chown "$MC_USER":"$MC_USER" "$meta" 2>/dev/null
     fi
-    echo "✅ Settings (Gamemode & Gamerules) updated live, and saved."
+    echo "✅ Live settings updated and persisted."
 }
 
 action_rename() {
@@ -191,7 +205,6 @@ action_export() {
     local target="${MAPS[$((idx - 1))]}"
     if [ -z "$target" ]; then echo "Invalid selection."; return; fi
 
-    # 1. Định tuyến thư mục Home thực tế của user gọi lệnh
     local real_home
     if [ -n "$SUDO_USER" ]; then
         real_home=$(eval echo ~"$SUDO_USER")
@@ -202,16 +215,10 @@ action_export() {
     local default_dest="$real_home/minenux_exports"
     read -p "Enter destination directory [$default_dest]: " dest_dir
     dest_dir="${dest_dir:-$default_dest}"
-
-    # 2. Xử lý an toàn nếu user nhập tay ký tự '~' (ví dụ: ~/my_backups)
     dest_dir="${dest_dir/#\~/$real_home}"
 
     mkdir -p "$dest_dir"
-    
-    # 3. Phân quyền lại cho thư mục chứa nếu nó vừa được root tạo ra
-    if [ -n "$SUDO_USER" ]; then
-        chown -R "$SUDO_USER":"$SUDO_USER" "$dest_dir"
-    fi
+    if [ -n "$SUDO_USER" ]; then chown -R "$SUDO_USER":"$SUDO_USER" "$dest_dir"; fi
 
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local archive="$dest_dir/${target}_${timestamp}.tar.gz"
@@ -222,13 +229,70 @@ action_export() {
         sleep 2
     fi
 
-    echo "Compressing '$target' to $archive..."
-    tar -czf "$archive" -C "$INSTALL_DIR" "$target"
+    echo "Preparing export payload in isolated staging area..."
+    local staging_dir=$(mktemp -d)
+    cp -r "$INSTALL_DIR/$target" "$staging_dir/"
+
+    # --- BẮT ĐẦU NBT TRANSFORMER HOOK ---
+    local player_dir="$staging_dir/$target/playerdata"
+    if [ -d "$player_dir" ]; then
+        # Truy xuất UUID file mới nhất (đại diện cho host player)
+        local latest_player=$(ls -t "$player_dir/"*.dat 2>/dev/null | head -n 1)
+        local level_dat="$staging_dir/$target/level.dat"
+        
+        if [ -n "$latest_player" ] && [ -f "$level_dat" ]; then
+            echo "Injecting Player UUID data into level.dat for Singleplayer compatibility..."
+            
+            # Ưu tiên sử dụng venv nếu đã được cài đặt, fallback về python3 hệ thống
+            local py_bin="python3"
+            [ -x "$INSTALL_DIR/venv/bin/python3" ] && py_bin="$INSTALL_DIR/venv/bin/python3"
+
+            $py_bin -c "
+import sys
+try:
+    from nbt import nbt
+except ImportError:
+    print('  -> Warning: nbt library missing. Skipping Data.Player injection.')
+    sys.exit(0)
+
+try:
+    player_nbt = nbt.NBTFile('$latest_player', 'rb')
+    level_nbt = nbt.NBTFile('$level_dat', 'rb')
     
-    # 4. Phân quyền lại cho tệp nén tar.gz để user bình thường có thể sử dụng
-    if [ -n "$SUDO_USER" ]; then
-        chown "$SUDO_USER":"$SUDO_USER" "$archive"
+    if 'Data' not in level_nbt:
+        sys.exit(1)
+        
+    data_tag = level_nbt['Data']
+    if 'Player' not in data_tag:
+        data_tag.tags.append(nbt.TAG_Compound(name='Player'))
+        
+    player_tag = data_tag['Player']
+    
+    # Các thông số sinh tồn cốt lõi cần đồng bộ
+    sync_tags = ['Inventory', 'Pos', 'Rotation', 'XpLevel', 'XpP', 'XpSeed', 'XpTotal', 'Health', 'foodLevel', 'foodTickTimer', 'foodExhaustionLevel', 'foodSaturationLevel', 'abilities']
+    
+    for t in sync_tags:
+        if t in player_nbt:
+            if t in player_tag:
+                del player_tag[t]
+            player_tag.tags.append(player_nbt[t])
+            
+    level_nbt.write_file('$level_dat')
+    print('  -> NBT Injection successful. Character data synchronized.')
+except Exception as e:
+    print(f'  -> NBT Injection failed: {e}')
+"
+        fi
     fi
+    # --- KẾT THÚC NBT TRANSFORMER HOOK ---
+
+    echo "Compressing '$target' to $archive..."
+    tar -czf "$archive" -C "$staging_dir" "$target"
+    
+    if [ -n "$SUDO_USER" ]; then chown "$SUDO_USER":"$SUDO_USER" "$archive"; fi
+    
+    # Dọn dẹp phân vùng tạm
+    rm -rf "$staging_dir"
     
     local sz=$(du -sh "$archive" | cut -f1)
     echo "✅ Export complete! Archive saved at: $archive (Size: $sz)"
@@ -237,8 +301,6 @@ action_export() {
 action_import() {
     read -p $'\nEnter absolute path to the map archive (.tar.gz): ' archive_path
     eval archive_path="$archive_path"
-    
-    # Loại bỏ dấu ngoặc kép nếu user kéo thả file vào terminal
     archive_path="${archive_path%\"}"
     archive_path="${archive_path#\"}"
     
@@ -253,7 +315,6 @@ action_import() {
     tar -xzf "$archive_path" -C "$tmpdir"
     
     local extracted_world=$(find "$tmpdir" -name "level.dat" -printf '%h\n' -quit)
-    
     if [ -z "$extracted_world" ]; then
         echo "❌ Invalid archive: No level.dat found inside the tarball."
         rm -rf "$tmpdir"
@@ -263,20 +324,16 @@ action_import() {
     mv "$extracted_world" "$INSTALL_DIR/$newname"
     rm -rf "$tmpdir"
 
-    # Meta Repair: Phục hồi metadata và trích xuất Seed động
-    # Meta Repair (Bên trong action_import)
     local meta="$INSTALL_DIR/$newname/.minenux-meta.json"
     if [ ! -f "$meta" ]; then
         echo "⚠️ No Minenux metadata found in archive. Synthesizing config..."
-        
-        # Gắn cờ pending để RCON tự động bắt seed khi boot
-        jq -n --arg seed "pending" --arg gm "survival" --arg created "$(date -Iseconds)" \
-            '{seed: $seed, gamemode: $gm, created_at: $created, gamerules: {}, gamerules_applied: false}' \
+        jq -n --arg seed "pending" --arg gm "survival" --arg ch "false" --arg created "$(date -Iseconds)" \
+            '{seed: $seed, gamemode: $gm, cheats: $ch, created_at: $created, gamerules: {}, gamerules_applied: false}' \
             > "$meta"
     fi
     
     chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR/$newname"
-    echo "✅ Map successfully imported and registered as '$newname'."
+    echo "✅ Map successfully imported as '$newname'."
 }
 
 action_delete() {
@@ -301,7 +358,7 @@ while true; do
     echo ""
     echo "1) Switch active map"
     echo "2) Create new map (seed + gamerules)"
-    echo "3) Edit gamerules of the running map"
+    echo "3) Edit live settings (Gamemode/Cheats/Rules)"
     echo "4) Rename a map"
     echo "5) Export a map"
     echo "6) Import a map"

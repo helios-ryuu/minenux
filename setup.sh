@@ -80,6 +80,7 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     SEED_MODE=$(jq -r '.initial_map.seed_mode // "random"' "$CONFIG_FILE")
     LEVEL_SEED=$(jq -r '.initial_map.seed // empty' "$CONFIG_FILE")
     GMODE=$(jq -r '.initial_map.gamemode // "survival"' "$CONFIG_FILE")
+    ALLOW_CHEATS=$(jq -r '.initial_map.allow_cheats // false' "$CONFIG_FILE")
     GAMERULES_JSON=$(jq -c '.initial_map.gamerules // {}' "$CONFIG_FILE")
 
     # Require variables are set
@@ -136,6 +137,9 @@ else
         echo "Invalid gamemode. Defaulting to survival."
         GMODE="survival"
     fi
+
+    read -p "Allow Cheats? [false]: " ALLOW_CHEATS
+    ALLOW_CHEATS=${ALLOW_CHEATS:-false}
 
     LEVEL_SEED=$(prompt_seed)
     GAMERULES_JSON=$(prompt_gamerules)
@@ -223,6 +227,7 @@ prop_set max-players "$MAX_PLAYERS"
 prop_set level-name "$LEVEL_NAME"
 prop_set level-seed "$LEVEL_SEED"
 prop_set gamemode "$GMODE"
+prop_set allow-flight "$ALLOW_CHEATS"
 prop_set enable-rcon "true"
 prop_set "rcon.port" "$RCON_PORT"
 prop_set "rcon.password" "$RCON_PASSWORD"
