@@ -278,7 +278,7 @@ ExecStart=$RUN_SH
 
 Restart=on-failure
 RestartSec=20s
-KillMode=process
+KillMode=control-group
 StandardInput=null
 
 [Install]
