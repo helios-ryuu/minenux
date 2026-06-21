@@ -1,0 +1,18 @@
+{
+  "system": {
+    "java_version": "25",
+    "mc_user": "minenux",
+    "install_dir": "/opt/minecraft/server"
+  },
+  "minecraft": {
+    "mc_version": "26.2",
+    "fabric_version": "0.19.3",
+    "installer_version": "1.1.1",
+    "memory_alloc": "8G"
+  },
+  "server": {
+    "online-mode": "false",
+    "max-players": "20",
+    "level-seed": ""
+  }
+}
