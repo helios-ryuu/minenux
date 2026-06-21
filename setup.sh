@@ -20,9 +20,8 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo "=== Phase 1: Environment & Dependencies ==="
-apt update && apt upgrade -y
-apt install -y curl wget git nano ufw tar jq
+# We need jq early to parse config and curl for API resolution
+apt update && apt install -y curl jq
 
 # Variables
 if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
@@ -35,6 +34,11 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     RAM=$(jq -r '.minecraft.memory_alloc' "$CONFIG_FILE")
     ONLINE_MODE=$(jq -r '.server."online-mode"' "$CONFIG_FILE")
     MAX_PLAYERS=$(jq -r '.server."max-players"' "$CONFIG_FILE")
+# Require variables are set
+    if [ -z "$JAVA_VER" ] || [ -z "$MC_VER" ]; then
+         echo "Error parsing config file"
+         exit 1
+    fi
 else
     read -p "Enter Target Java Version (Headless) [25]: " JAVA_VER
     JAVA_VER=${JAVA_VER:-25}
@@ -63,18 +67,6 @@ else
     read -p "Max Players? [20]: " MAX_PLAYERS
     MAX_PLAYERS=${MAX_PLAYERS:-20}
 fi
-
-echo "Installing OpenJDK $JAVA_VER Headless..."
-apt install -y "openjdk-${JAVA_VER}-jdk-headless"
-
-echo "Creating unprivileged user '$MC_USER'..."
-id -u "$MC_USER" &>/dev/null || useradd -r -m -U -d "$INSTALL_DIR" -s /bin/bash "$MC_USER"
-
-mkdir -p "$INSTALL_DIR"
-chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR"
-
-echo "=== Phase 2: Minecraft & Fabric Bootstrapping ==="
-su - "$MC_USER" -c "mkdir -p '$INSTALL_DIR/mods'"
 
 # Resolve "latest" to actual versions via Fabric Meta API
 if [ "$MC_VER" == "latest" ]; then
@@ -113,6 +105,21 @@ if [ "$AUTO_CONFIRM" = false ]; then
         exit 0
     fi
 fi
+
+echo "=== Phase 1: Environment & Dependencies ==="
+apt install -y wget git nano ufw tar
+
+echo "Installing OpenJDK $JAVA_VER Headless..."
+apt install -y "openjdk-${JAVA_VER}-jdk-headless"
+
+echo "Creating unprivileged user '$MC_USER'..."
+id -u "$MC_USER" &>/dev/null || useradd -r -m -U -d "$INSTALL_DIR" -s /bin/bash "$MC_USER"
+
+mkdir -p "$INSTALL_DIR"
+chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR"
+
+echo "=== Phase 2: Minecraft & Fabric Bootstrapping ==="
+su - "$MC_USER" -c "mkdir -p '$INSTALL_DIR/mods'"
 
 echo "Downloading Fabric bundle server.jar..."
 DOWNLOAD_URL="https://meta.fabricmc.net/v2/versions/loader/${MC_VER}/${FABRIC_VER}/${INSTALLER_VER}/server/jar"
