@@ -4,9 +4,15 @@
 set -e
 
 CONFIG_FILE=""
-if [ "$1" == "--config" ] && [ -n "$2" ]; then
-    CONFIG_FILE="$2"
-fi
+AUTO_CONFIRM=false
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --config) CONFIG_FILE="$2"; shift ;;
+        -y|--yes) AUTO_CONFIRM=true ;;
+    esac
+    shift
+done
 
 # Need root
 if [ "$EUID" -ne 0 ]; then
@@ -87,6 +93,26 @@ if [ "$INSTALLER_VER" == "latest" ]; then
 fi
 
 echo "Target Versions -> Game: $MC_VER | Loader: $FABRIC_VER | Installer: $INSTALLER_VER"
+
+if [ "$AUTO_CONFIRM" = false ]; then
+    echo "========================================="
+    echo "Review your configuration:"
+    echo "- Java Version:    $JAVA_VER"
+    echo "- User:            $MC_USER"
+    echo "- Install Dir:     $INSTALL_DIR"
+    echo "- Game Version:    $MC_VER"
+    echo "- Fabric Version:  $FABRIC_VER"
+    echo "- Installer Ver:   $INSTALLER_VER"
+    echo "- RAM:             $RAM"
+    echo "- Online Mode:     $ONLINE_MODE"
+    echo "- Max Players:     $MAX_PLAYERS"
+    echo "========================================="
+    read -p "Proceed with these settings? [Y/n]: " CONFIRM_PROCEED
+    if [[ "$CONFIRM_PROCEED" =~ ^[Nn] ]]; then
+        echo "Aborted by user."
+        exit 0
+    fi
+fi
 
 echo "Downloading Fabric bundle server.jar..."
 DOWNLOAD_URL="https://meta.fabricmc.net/v2/versions/loader/${MC_VER}/${FABRIC_VER}/${INSTALLER_VER}/server/jar"

@@ -8,6 +8,12 @@ This repository contains automated scripts to deploy an optimized Minecraft Fabr
 
 ## Usage
 
+First, grant execution permissions to the scripts:
+
+```bash
+chmod +x setup.sh mods_downloader.sh
+```
+
 ### Method 1: Interactive Mode
 Run the setup script without any arguments and follow the prompts.
 
@@ -16,13 +22,15 @@ sudo ./setup.sh
 ```
 
 ### Method 2: Unattended Configuration Mode
-You can automate the entire deployment by providing a JSON configuration file. Use the included `config.example.json` as a base.
+You can automate the deployment by providing a JSON configuration file. Use the included `config.example.json` as a base.
 
 ```bash
 cp config.example.json config.json
 # Edit config.json with your preferences
 sudo ./setup.sh --config config.json
 ```
+
+*Note: The script will print a summary of all settings and ask for final confirmation. To skip the confirmation prompt and accept everything automatically, add the `-y` flag: `sudo ./setup.sh -y` or `sudo ./setup.sh --config config.json -y`.*
 
 ### Mod Downloader
 To download server-side compatible mods directly from Modrinth, use the `mods_downloader.sh` script.
