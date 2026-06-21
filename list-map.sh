@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 # list-map.sh - interactive map manager.
-# Deliberately NOT using `set -e`: this is a long-lived interactive menu where
-# individual commands (grep/jq with no match, an invalid menu choice, etc.)
-# are expected to fail without aborting the whole script.
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -16,8 +13,6 @@ print_header() {
     echo "============================================================"
 }
 
-# Populates the global MAPS array (intentionally not `local`: every action_*
-# function below calls show_map_list first and then reads MAPS by index).
 show_map_list() {
     local current_level running
     current_level=$(prop_get level-name)
@@ -62,10 +57,7 @@ action_switch() {
     [ ${#MAPS[@]} -eq 0 ] && return
     read -p $'\nSelect map number to activate: ' idx
     local target="${MAPS[$((idx - 1))]}"
-    if [ -z "$target" ]; then
-        echo "Invalid selection."
-        return
-    fi
+    if [ -z "$target" ]; then echo "Invalid selection."; return; fi
 
     local current
     current=$(prop_get level-name)
@@ -85,14 +77,8 @@ action_switch() {
 
 action_create() {
     read -p $'\nNew map name (letters, numbers, dash, underscore): ' name
-    if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
-        echo "Invalid name."
-        return
-    fi
-    if [ -d "$INSTALL_DIR/$name" ]; then
-        echo "A map named '$name' already exists."
-        return
-    fi
+    if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "Invalid name."; return; fi
+    if [ -d "$INSTALL_DIR/$name" ]; then echo "A map named '$name' already exists."; return; fi
 
     local seed rules
     seed=$(prompt_seed)
@@ -144,7 +130,7 @@ action_edit_gamerules() {
         echo "$tmp" > "$meta"
         chown "$MC_USER":"$MC_USER" "$meta" 2>/dev/null
     fi
-    echo "✅ Gamerules updated live, and saved so they persist next time this map loads."
+    echo "✅ Gamerules updated live, and saved."
 }
 
 action_rename() {
@@ -152,23 +138,14 @@ action_rename() {
     [ ${#MAPS[@]} -eq 0 ] && return
     read -p $'\nSelect map number to rename: ' idx
     local target="${MAPS[$((idx - 1))]}"
-    if [ -z "$target" ]; then
-        echo "Invalid selection."
-        return
-    fi
+    if [ -z "$target" ]; then echo "Invalid selection."; return; fi
     if [ "$target" == "$(prop_get level-name)" ] && is_server_running; then
         echo "Stop the server (or switch off this map) before renaming it."
         return
     fi
     read -p "New name for '$target': " newname
-    if [[ ! "$newname" =~ ^[A-Za-z0-9_-]+$ ]]; then
-        echo "Invalid name."
-        return
-    fi
-    if [ -d "$INSTALL_DIR/$newname" ]; then
-        echo "Name already in use."
-        return
-    fi
+    if [[ ! "$newname" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "Invalid name."; return; fi
+    if [ -d "$INSTALL_DIR/$newname" ]; then echo "Name already in use."; return; fi
 
     mv "$INSTALL_DIR/$target" "$INSTALL_DIR/$newname"
     if [ "$target" == "$(prop_get level-name)" ]; then
@@ -177,24 +154,83 @@ action_rename() {
     echo "✅ Renamed '$target' to '$newname'."
 }
 
+action_export() {
+    show_map_list
+    [ ${#MAPS[@]} -eq 0 ] && return
+    read -p $'\nSelect map number to EXPORT: ' idx
+    local target="${MAPS[$((idx - 1))]}"
+    if [ -z "$target" ]; then echo "Invalid selection."; return; fi
+
+    read -p "Enter destination directory [~/minenux_exports]: " dest_dir
+    dest_dir="${dest_dir:-$HOME/minenux_exports}"
+    eval dest_dir="$dest_dir"
+
+    mkdir -p "$dest_dir"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local archive="$dest_dir/${target}_${timestamp}.tar.gz"
+
+    echo "Flushing world data to disk..."
+    if is_server_running && [ "$target" == "$(prop_get level-name)" ]; then
+        rcon_exec "save-all" > /dev/null 2>&1
+        sleep 2
+    fi
+
+    echo "Compressing '$target' to $archive..."
+    tar -czf "$archive" -C "$INSTALL_DIR" "$target"
+    
+    local sz=$(du -sh "$archive" | cut -f1)
+    echo "✅ Export complete! Archive size: $sz"
+}
+
+action_import() {
+    read -p $'\nEnter absolute path to the map archive (.tar.gz): ' archive_path
+    eval archive_path="$archive_path"
+    if [ ! -f "$archive_path" ]; then echo "❌ File not found at $archive_path"; return; fi
+
+    read -p "Enter new map name for this import: " newname
+    if [[ ! "$newname" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "❌ Invalid name format."; return; fi
+    if [ -d "$INSTALL_DIR/$newname" ]; then echo "❌ Map '$newname' already exists."; return; fi
+
+    echo "Extracting map data..."
+    local tmpdir=$(mktemp -d)
+    tar -xzf "$archive_path" -C "$tmpdir"
+    
+    local extracted_world=$(find "$tmpdir" -name "level.dat" -printf '%h\n' -quit)
+    
+    if [ -z "$extracted_world" ]; then
+        echo "❌ Invalid archive: No level.dat found inside the tarball."
+        rm -rf "$tmpdir"
+        return
+    fi
+
+    mv "$extracted_world" "$INSTALL_DIR/$newname"
+    rm -rf "$tmpdir"
+
+    # Meta Repair: Ensure meta JSON exists for management tools
+    local meta="$INSTALL_DIR/$newname/.minenux-meta.json"
+    if [ ! -f "$meta" ]; then
+        echo "⚠️ No Minenux metadata found in archive. Synthesizing new config..."
+        jq -n --arg seed "imported" --arg created "$(date -Iseconds)" \
+            '{seed: $seed, created_at: $created, gamerules: {}, gamerules_applied: false}' \
+            > "$meta"
+    fi
+    
+    chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR/$newname"
+    echo "✅ Map successfully imported and registered as '$newname'."
+}
+
 action_delete() {
     show_map_list
     [ ${#MAPS[@]} -eq 0 ] && return
     read -p $'\nSelect map number to DELETE: ' idx
     local target="${MAPS[$((idx - 1))]}"
-    if [ -z "$target" ]; then
-        echo "Invalid selection."
-        return
-    fi
+    if [ -z "$target" ]; then echo "Invalid selection."; return; fi
     if [ "$target" == "$(prop_get level-name)" ]; then
         echo "Cannot delete the currently selected map. Switch to another map first."
         return
     fi
     read -p "Type the map name again to confirm permanent deletion: " confirm
-    if [ "$confirm" != "$target" ]; then
-        echo "Confirmation mismatch, aborted."
-        return
-    fi
+    if [ "$confirm" != "$target" ]; then echo "Confirmation mismatch, aborted."; return; fi
     rm -rf "${INSTALL_DIR:?}/${target:?}"
     echo "🗑️  Map '$target' deleted."
 }
@@ -207,16 +243,20 @@ while true; do
     echo "2) Create new map (seed + gamerules)"
     echo "3) Edit gamerules of the running map"
     echo "4) Rename a map"
-    echo "5) Delete a map"
-    echo "6) Exit"
+    echo "5) Export a map"
+    echo "6) Import a map"
+    echo "7) Delete a map"
+    echo "8) Exit"
     read -p "Choose an option: " opt
     case $opt in
         1) action_switch ;;
         2) action_create ;;
         3) action_edit_gamerules ;;
         4) action_rename ;;
-        5) action_delete ;;
-        6) echo "Bye."; exit 0 ;;
+        5) action_export ;;
+        6) action_import ;;
+        7) action_delete ;;
+        8) echo "Bye."; exit 0 ;;
         *) echo "Invalid option." ;;
     esac
 done

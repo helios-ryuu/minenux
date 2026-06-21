@@ -27,6 +27,43 @@ apt update && apt install -y curl jq openssl python3
 
 source "$DIR/lib/common.sh"
 
+# --- PRE-FLIGHT CHECK: Ghost Processes & Existing Installs ---
+echo "Running Pre-flight system checks..."
+ORPHAN_PIDS=$(pgrep -f "java.*server.jar" || true)
+if [ -n "$ORPHAN_PIDS" ]; then
+    echo "⚠️  CRITICAL: Found running Minecraft instance(s) [PID: $(echo $ORPHAN_PIDS | tr '\n' ' ')]."
+    echo "Continuing will cause port conflicts and memory allocation failures."
+    read -p "Kill these processes automatically before proceeding? [Y/n]: " KILL_PROCEED
+    if [[ ! "$KILL_PROCEED" =~ ^[Nn] ]]; then
+        pkill -f "java.*server.jar"
+        sleep 2
+        echo "Processes terminated."
+    else
+        echo "Installation aborted to protect existing processes."
+        exit 1
+    fi
+fi
+
+if [ -d "/opt/minecraft/server" ] && [ "$AUTO_CONFIRM" = false ]; then
+    echo "⚠️  WARNING: Existing installation detected at /opt/minecraft/server."
+    echo "Running setup over an existing install may corrupt configurations or World locks."
+    read -p "Do you want to run uninstall.sh first to start fresh? [Y/n/Skip]: " WIPE_PROCEED
+    if [[ "$WIPE_PROCEED" =~ ^[Yy] || -z "$WIPE_PROCEED" ]]; then
+        if [ -f "$DIR/uninstall.sh" ]; then
+            bash "$DIR/uninstall.sh"
+            echo "Cleanup complete. Resuming setup..."
+        else
+            echo "uninstall.sh not found. Aborting."
+            exit 1
+        fi
+    elif [[ "$WIPE_PROCEED" =~ ^[Nn] ]]; then
+        echo "Aborted setup by user."
+        exit 1
+    fi
+    # If user types "Skip", setup continues over the existing files
+fi
+# --- END PRE-FLIGHT CHECK ---
+
 # Variables
 if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     JAVA_VER=$(jq -r '.system.java_version' "$CONFIG_FILE")
