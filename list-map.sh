@@ -59,17 +59,19 @@ action_switch() {
     local target="${MAPS[$((idx - 1))]}"
     if [ -z "$target" ]; then echo "Invalid selection."; return; fi
 
-    local current
-    current=$(prop_get level-name)
-    if [ "$target" == "$current" ]; then
-        echo "'$target' is already the selected map."
-        return
-    fi
+    local current=$(prop_get level-name)
+    if [ "$target" == "$current" ]; then echo "'$target' is already the selected map."; return; fi
+
+    # Truy xuất gamemode từ metadata (mặc định survival nếu file cũ không có)
+    local gmode=$(jq -r '.gamemode // "survival"' "$INSTALL_DIR/$target/.minenux-meta.json" 2>/dev/null)
 
     echo "Switching active map: $current -> $target"
     graceful_stop
+    
     prop_set level-name "$target"
-    echo "Starting server with map '$target'..."
+    prop_set gamemode "$gmode"
+    
+    echo "Starting server with map '$target' (Gamemode: $gmode)..."
     systemctl start minecraft
     apply_pending_gamerules "$target"
     echo "✅ Server is now running map '$target'."
@@ -80,26 +82,36 @@ action_create() {
     if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "Invalid name."; return; fi
     if [ -d "$INSTALL_DIR/$name" ]; then echo "A map named '$name' already exists."; return; fi
 
-    local seed rules
+    local seed rules gmode
     seed=$(prompt_seed)
     rules=$(prompt_gamerules)
+    
+    # Yêu cầu nhập Game Mode
+    read -p "Select gamemode (survival/creative/adventure/spectator) [survival]: " gmode
+    gmode=${gmode:-survival}
+    if [[ ! "$gmode" =~ ^(survival|creative|adventure|spectator)$ ]]; then
+        echo "Invalid gamemode format. Defaulting to survival."
+        gmode="survival"
+    fi
 
     graceful_stop
     mkdir -p "$INSTALL_DIR/$name"
     chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR/$name"
 
-    jq -n --arg seed "$seed" --argjson rules "$rules" --arg created "$(date -Iseconds)" \
-        '{seed: $seed, created_at: $created, gamerules: $rules, gamerules_applied: false}' \
+    # Ghi gmode vào metadata
+    jq -n --arg seed "$seed" --arg gm "$gmode" --argjson rules "$rules" --arg created "$(date -Iseconds)" \
+        '{seed: $seed, gamemode: $gm, created_at: $created, gamerules: $rules, gamerules_applied: false}' \
         > "$INSTALL_DIR/$name/.minenux-meta.json"
     chown "$MC_USER":"$MC_USER" "$INSTALL_DIR/$name/.minenux-meta.json"
 
     prop_set level-name "$name"
     prop_set level-seed "$seed"
+    prop_set gamemode "$gmode"
 
     echo "Starting server to generate the new world (first boot can take 1-3 min)..."
     systemctl start minecraft
     apply_pending_gamerules "$name"
-    echo "✅ Map '$name' created and active (seed: ${seed:-random})."
+    echo "✅ Map '$name' created and active (Mode: $gmode, Seed: ${seed:-random})."
 }
 
 action_edit_gamerules() {
@@ -207,6 +219,11 @@ action_export() {
 action_import() {
     read -p $'\nEnter absolute path to the map archive (.tar.gz): ' archive_path
     eval archive_path="$archive_path"
+    
+    # Loại bỏ dấu ngoặc kép nếu user kéo thả file vào terminal
+    archive_path="${archive_path%\"}"
+    archive_path="${archive_path#\"}"
+    
     if [ ! -f "$archive_path" ]; then echo "❌ File not found at $archive_path"; return; fi
 
     read -p "Enter new map name for this import: " newname
@@ -228,12 +245,15 @@ action_import() {
     mv "$extracted_world" "$INSTALL_DIR/$newname"
     rm -rf "$tmpdir"
 
-    # Meta Repair: Ensure meta JSON exists for management tools
+    # Meta Repair: Phục hồi metadata và trích xuất Seed động
+    # Meta Repair (Bên trong action_import)
     local meta="$INSTALL_DIR/$newname/.minenux-meta.json"
     if [ ! -f "$meta" ]; then
-        echo "⚠️ No Minenux metadata found in archive. Synthesizing new config..."
-        jq -n --arg seed "imported" --arg created "$(date -Iseconds)" \
-            '{seed: $seed, created_at: $created, gamerules: {}, gamerules_applied: false}' \
+        echo "⚠️ No Minenux metadata found in archive. Synthesizing config..."
+        
+        # Gắn cờ pending để RCON tự động bắt seed khi boot
+        jq -n --arg seed "pending" --arg gm "survival" --arg created "$(date -Iseconds)" \
+            '{seed: $seed, gamemode: $gm, created_at: $created, gamerules: {}, gamerules_applied: false}' \
             > "$meta"
     fi
     

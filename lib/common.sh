@@ -93,34 +93,47 @@ list_world_folders() {
 }
 
 apply_pending_gamerules() {
-    # Applies the gamerules stored in a map's metadata exactly once (idempotent
-    # via the gamerules_applied flag). Safe to call on every boot.
     local map_name="$1"
     local meta_file="$INSTALL_DIR/$map_name/.minenux-meta.json"
     [ -f "$meta_file" ] || return 0
 
     local applied
     applied=$(jq -r '.gamerules_applied // false' "$meta_file" 2>/dev/null)
-    [ "$applied" == "true" ] && return 0
 
-    echo "Waiting for RCON to come online to apply saved gamerules for '$map_name'..."
+    echo "Waiting for RCON to come online for map '$map_name' telemetry..."
     if ! rcon_exec --wait "list" &> /dev/null; then
-        echo "⚠️  Could not reach RCON; gamerules were not applied. Run list-map.sh -> option 3 to apply them manually."
+        echo "⚠️  Could not reach RCON; background tasks aborted."
         return 1
     fi
 
-    local rules
-    rules=$(jq -r '.gamerules // {} | to_entries[] | "\(.key) \(.value)"' "$meta_file" 2>/dev/null)
-    while IFS= read -r rule; do
-        [ -z "$rule" ] && continue
-        rcon_exec "gamerule $rule" &> /dev/null
-    done <<< "$rules"
+    # 1. TỰ ĐỘNG TRÍCH XUẤT SEED (Zero-Dependency)
+    local current_seed=$(jq -r '.seed // empty' "$meta_file" 2>/dev/null)
+    if [ "$current_seed" == "imported" ] || [ "$current_seed" == "pending" ]; then
+        local rcon_seed_out=$(rcon_exec "seed" 2>/dev/null)
+        # Bắt chuỗi định dạng: "Seed: [123456789]"
+        local real_seed=$(echo "$rcon_seed_out" | sed -n 's/.*Seed: \[\(.*\)\].*/\1/p' | tr -d '\r')
+        if [ -n "$real_seed" ]; then
+            local tmp_seed=$(jq --arg s "$real_seed" '.seed = $s' "$meta_file")
+            echo "$tmp_seed" > "$meta_file"
+            echo "✅ Auto-detected true seed '$real_seed' via RCON telemetry."
+        fi
+    fi
 
-    local tmp
-    tmp=$(jq '.gamerules_applied = true' "$meta_file")
-    echo "$tmp" > "$meta_file"
+    # 2. ÁP DỤNG GAMERULES (Chỉ chạy 1 lần)
+    if [ "$applied" != "true" ]; then
+        local rules
+        rules=$(jq -r '.gamerules // {} | to_entries[] | "\(.key) \(.value)"' "$meta_file" 2>/dev/null)
+        while IFS= read -r rule; do
+            [ -z "$rule" ] && continue
+            rcon_exec "gamerule $rule" &> /dev/null
+        done <<< "$rules"
+
+        local tmp_rules=$(jq '.gamerules_applied = true' "$meta_file")
+        echo "$tmp_rules" > "$meta_file"
+        echo "✅ Gamerules applied successfully."
+    fi
+    
     chown "$MC_USER":"$MC_USER" "$meta_file" 2>/dev/null
-    echo "✅ Gamerules applied for map '$map_name'."
 }
 
 # --- interactive prompts (used by setup.sh and list-map.sh) --------------------------
