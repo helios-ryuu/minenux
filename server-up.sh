@@ -14,11 +14,24 @@ sleep 2
 
 if systemctl is-active --quiet minecraft; then
     # Grab public IP using an external API
-    PUBLIC_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || echo "UNKNOWN_IP")
+    PUBLIC_IPV4=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com || echo "")
+    PUBLIC_IPV6=$(curl -6 -s ifconfig.me || curl -6 -s icanhazip.com || echo "")
+    
     echo "--------------------------------------------------------"
     echo "✅ Success! Minecraft Server is now running in the background."
     echo ""
-    echo "🎮 Connect Address: $PUBLIC_IP:25565"
+    
+    if [ -n "$PUBLIC_IPV4" ]; then
+        echo "🎮 Connect Address (IPv4): $PUBLIC_IPV4:25565"
+    fi
+    
+    if [ -n "$PUBLIC_IPV6" ]; then
+        echo "🎮 Connect Address (IPv6): [$PUBLIC_IPV6]:25565"
+    fi
+    
+    if [ -z "$PUBLIC_IPV4" ] && [ -z "$PUBLIC_IPV6" ]; then
+        echo "🎮 Connect Address: UNKNOWN_IP:25565"
+    fi
     echo "--------------------------------------------------------"
     echo "To view live server logs, run:"
     echo "  sudo journalctl -u minecraft -f"

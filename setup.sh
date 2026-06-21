@@ -61,8 +61,14 @@ else
     read -p "Enter RAM Allocation (e.g., 8G) [8G]: " RAM
     RAM=${RAM:-8G}
 
+    echo ""
+    echo "--- Online Mode (Authentication) ---"
+    echo "* true  : Premium accounts only (Secure). Best for PUBLIC servers."
+    echo "* false : Allows Cracked/Offline accounts. Best for PRIVATE/LAN servers with friends."
+    echo "          (Warning: If false, anyone can login with your admin name. Install an Auth mod to protect!)"
     read -p "Enable Online Mode? (true/false) [false]: " ONLINE_MODE
     ONLINE_MODE=${ONLINE_MODE:-false}
+    echo ""
     
     read -p "Max Players? [20]: " MAX_PLAYERS
     MAX_PLAYERS=${MAX_PLAYERS:-20}
@@ -186,4 +192,4 @@ systemctl enable minecraft
 echo "Allowing UFW Port 25565/tcp..."
 ufw allow 25565/tcp >/dev/null 2>&1
 
-echo "Setup Complete! To start the server, run: sudo systemctl start minecraft"
+echo "Setup Complete! To start the server, run: sudo ./server-up.sh"
