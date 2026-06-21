@@ -39,14 +39,14 @@ else
     read -p "Enter Install Directory [/opt/minecraft/server]: " INSTALL_DIR
     INSTALL_DIR=${INSTALL_DIR:-/opt/minecraft/server}
     
-    read -p "Enter Minecraft Version [26.2]: " MC_VER
-    MC_VER=${MC_VER:-26.2}
+    read -p "Enter Minecraft Version [latest]: " MC_VER
+    MC_VER=${MC_VER:-latest}
     
-    read -p "Enter Fabric Loader Version [0.19.3]: " FABRIC_VER
-    FABRIC_VER=${FABRIC_VER:-0.19.3}
+    read -p "Enter Fabric Loader Version [latest]: " FABRIC_VER
+    FABRIC_VER=${FABRIC_VER:-latest}
     
-    read -p "Enter Fabric Installer Version [1.1.1]: " INSTALLER_VER
-    INSTALLER_VER=${INSTALLER_VER:-1.1.1}
+    read -p "Enter Fabric Installer Version [latest]: " INSTALLER_VER
+    INSTALLER_VER=${INSTALLER_VER:-latest}
     
     read -p "Enter RAM Allocation (e.g., 8G) [8G]: " RAM
     RAM=${RAM:-8G}
@@ -69,6 +69,24 @@ chown -R "$MC_USER":"$MC_USER" "$INSTALL_DIR"
 
 echo "=== Phase 2: Minecraft & Fabric Bootstrapping ==="
 su - "$MC_USER" -c "mkdir -p '$INSTALL_DIR/mods'"
+
+# Resolve "latest" to actual versions via Fabric Meta API
+if [ "$MC_VER" == "latest" ]; then
+    echo "Resolving latest stable Minecraft version..."
+    MC_VER=$(curl -s "https://meta.fabricmc.net/v2/versions/game" | jq -r '[.[] | select(.stable == true)][0].version')
+fi
+
+if [ "$FABRIC_VER" == "latest" ]; then
+    echo "Resolving latest stable Fabric Loader version..."
+    FABRIC_VER=$(curl -s "https://meta.fabricmc.net/v2/versions/loader" | jq -r '[.[] | select(.stable == true)][0].version')
+fi
+
+if [ "$INSTALLER_VER" == "latest" ]; then
+    echo "Resolving latest stable Fabric Installer version..."
+    INSTALLER_VER=$(curl -s "https://meta.fabricmc.net/v2/versions/installer" | jq -r '[.[] | select(.stable == true)][0].version')
+fi
+
+echo "Target Versions -> Game: $MC_VER | Loader: $FABRIC_VER | Installer: $INSTALLER_VER"
 
 echo "Downloading Fabric bundle server.jar..."
 DOWNLOAD_URL="https://meta.fabricmc.net/v2/versions/loader/${MC_VER}/${FABRIC_VER}/${INSTALLER_VER}/server/jar"
