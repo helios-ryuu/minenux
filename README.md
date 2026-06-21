@@ -11,7 +11,7 @@ This repository contains automated scripts to deploy an optimized Minecraft Fabr
 First, grant execution permissions to the scripts:
 
 ```bash
-chmod +x setup.sh mods_downloader.sh uninstall.sh server-up.sh server-down.sh
+chmod +x setup.sh mods_downloader.sh uninstall.sh server-up.sh server-down.sh ip.sh
 ```
 
 ### Method 1: Interactive Mode
