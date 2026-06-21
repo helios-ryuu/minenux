@@ -154,7 +154,6 @@ MEM_ALLOC="ALLOC_PLACEHOLDER"
 
 java -Xms${MEM_ALLOC} -Xmx${MEM_ALLOC} \
   -XX:+UseZGC \
-  -XX:+ZGenerational \
   -XX:+AlwaysPreTouch \
   -XX:+DisableExplicitGC \
   -XX:+PerfDisableSharedMem \
